@@ -21,7 +21,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::loader::get_app_data_by_name;
+use crate::{loader::get_app_data_by_name, mm::{MapPermission, PageTable, VirtAddr, VirtPageNum}, task::manager::TASK_MANAGER};
 use alloc::sync::Arc;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
@@ -114,4 +114,36 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+/// determine whether a vpn valid in current task memory_set
+pub fn if_vpn_valid(addr: usize) -> bool {
+    let v_vpn = VirtAddr::from(addr);
+    let vpn = v_vpn.floor();
+    TASK_MANAGER.exclusive_access().if_vpn_valid_in_cur_task(vpn)
+}
+
+/// insert_framed_area in current_task memory_set
+pub fn insert_framed_area_in_cur_task(start_va: VirtAddr, end_va: VirtAddr, prot: u8) {
+    let mut permission = MapPermission::empty();
+    if prot & 0x1 != 0 {
+        permission |= MapPermission::R;
+    }
+    if prot & 0x2 != 0 {
+        permission |= MapPermission::W;
+    }
+    if prot & 0x4 != 0 {
+        permission |= MapPermission::X;
+    }
+    permission |= MapPermission::U;
+    TASK_MANAGER.exclusive_access().insert_framed_area(start_va, end_va, permission);
+}
+
+/// unmap a range of vpn
+pub fn shrink_area_in_cur_task(
+    start_vpn: VirtPageNum,
+    end_vpn: VirtPageNum,
+    page_table: &mut PageTable,
+) {
+    TASK_MANAGER.exclusive_access().shrink_area(start_vpn, end_vpn, page_table);
 }

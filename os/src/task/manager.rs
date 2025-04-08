@@ -1,5 +1,6 @@
 //!Implementation of [`TaskManager`]
 use super::TaskControlBlock;
+use crate::mm::{MapPermission, PageTable, VirtAddr, VirtPageNum};
 use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -24,6 +25,47 @@ impl TaskManager {
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
         self.ready_queue.pop_front()
+    }
+
+    /// determine whether a vpn valid in current task memory_set
+    pub fn if_vpn_valid_in_cur_task(&self, vpn: VirtPageNum) -> bool {
+        // let inner = self.inner.exclusive_access();
+        // inner.tasks[inner.current_task].memory_set.if_vpn_valid(vpn)
+        let cur_task = Arc::clone(self.ready_queue.front().expect("No current task found"));
+        let flag = cur_task
+            .inner_exclusive_access()
+            .memory_set
+            .if_vpn_valid(vpn);
+        drop(cur_task);
+        flag
+    }
+
+    /// insert_framed_area in current_task memory_set
+    pub fn insert_framed_area(
+        &self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) {
+        let cur_task = Arc::clone(self.ready_queue.front().expect("No current task found"));
+        cur_task
+            .inner_exclusive_access()
+            .memory_set
+            .insert_framed_area(start_va, end_va, permission);
+    }
+
+    /// unmap a range of vpn
+    pub fn shrink_area(
+        &self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        page_table: &mut PageTable,
+    ) {
+        let cur_task = Arc::clone(self.ready_queue.front().expect("No current task found"));
+        cur_task
+            .inner_exclusive_access()
+            .memory_set
+            .shrink_area(start_vpn, end_vpn, page_table);
     }
 }
 
