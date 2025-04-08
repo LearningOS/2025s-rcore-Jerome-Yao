@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, PageTable, VirtAddr, VirtPageNum};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -69,7 +70,6 @@ lazy_static! {
         }
     };
 }
-
 impl TaskManager {
     /// Run the first task in task list.
     ///
@@ -153,6 +153,56 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// get current_task
+    pub fn get_cur_task_syscall(&self, id: usize) -> isize {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        let task_block = &inner.tasks[cur].sys_call_count.get_count(id);
+        drop(inner);
+        *task_block
+    }
+
+    /// count once syscall for current_task, encapsulate syscall count
+    pub fn cur_task_syscall_count(&self, id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].sys_call_count.count_once_syscall(id);
+    }
+
+    /// determine whether a vpn valid in current task memory_set
+    pub fn if_vpn_valid_in_cur_task(&self, vpn: VirtPageNum) -> bool {
+        let inner = self.inner.exclusive_access();
+        inner.tasks[inner.current_task].memory_set.if_vpn_valid(vpn)
+    }
+
+    /// insert_framed_area in current_task memory_set
+    pub fn insert_framed_area(
+        &self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur]
+            .memory_set
+            .insert_framed_area(start_va, end_va, permission);
+    }
+
+    /// unmap a range of vpn
+    pub fn shrink_area(
+        &self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        page_table: &mut PageTable,
+    ) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur]
+            .memory_set
+            .shrink_area(start_vpn, end_vpn, page_table);
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +251,36 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// determine whether a vpn valid in current task memory_set
+pub fn if_vpn_valid(addr: usize) -> bool {
+    let v_vpn = VirtAddr::from(addr);
+    let vpn = v_vpn.floor();
+    TASK_MANAGER.if_vpn_valid_in_cur_task(vpn)
+}
+
+/// insert_framed_area in current_task memory_set
+pub fn insert_framed_area_in_cur_task(start_va: VirtAddr, end_va: VirtAddr, prot: u8) {
+    let mut permission = MapPermission::empty();
+    if prot & 0x1 != 0 {
+        permission |= MapPermission::R;
+    }
+    if prot & 0x2 != 0 {
+        permission |= MapPermission::W;
+    }
+    if prot & 0x4 != 0 {
+        permission |= MapPermission::X;
+    }
+    permission |= MapPermission::U;
+    TASK_MANAGER.insert_framed_area(start_va, end_va, permission);
+}
+
+/// unmap a range of vpn
+pub fn shrink_area_in_cur_task(
+    start_vpn: VirtPageNum,
+    end_vpn: VirtPageNum,
+    page_table: &mut PageTable,
+) {
+    TASK_MANAGER.shrink_area(start_vpn, end_vpn, page_table);
 }

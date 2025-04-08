@@ -233,6 +233,10 @@ impl MemorySet {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.page_table.translate(vpn)
     }
+    /// Translate a virtual page number to a page table entry
+    pub fn translate_create(&mut self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        self.page_table.translate_create(vpn)
+    }
     /// shrink the area to new_end
     #[allow(unused)]
     pub fn shrink_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {
@@ -260,6 +264,40 @@ impl MemorySet {
             true
         } else {
             false
+        }
+    }
+
+    fn if_valid(&self, vpn: VirtPageNum) -> bool {
+        let mut flag = false;
+        for v in &self.areas {
+            if vpn >= v.vpn_range.get_start() && vpn < v.vpn_range.get_end() {
+                flag = true;
+                break;
+            }
+        }
+        flag
+    }
+    /// determine whether a vpn is valid
+    pub fn if_vpn_valid(&self, vpn: VirtPageNum) -> bool {
+        self.if_valid(vpn)
+    }
+
+    /// unmap a range of vpn
+    pub fn shrink_area(
+        &mut self,
+        start_vpn: VirtPageNum,
+        end_vpn: VirtPageNum,
+        page_table: &mut PageTable,
+    ) {
+        for area in &mut self.areas {
+            if area.if_vpn_inside(start_vpn) {
+                area.shrink_to(page_table, start_vpn);
+            }
+        }
+        for area in &mut self.areas {
+            if area.if_vpn_inside(end_vpn) {
+                area.shrink_from_start(page_table, end_vpn);
+            }
         }
     }
 }
@@ -327,6 +365,12 @@ impl MapArea {
         }
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
+    pub fn shrink_from_start(&mut self, page_table: &mut PageTable, new_start: VirtPageNum) {
+        for vpn in VPNRange::new(self.vpn_range.get_start(), new_start) {
+            self.unmap_one(page_table, vpn)
+        }
+        self.vpn_range = VPNRange::new(new_start, self.vpn_range.get_end());
+    }
     #[allow(unused)]
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
@@ -354,6 +398,14 @@ impl MapArea {
                 break;
             }
             current_vpn.step();
+        }
+    }
+
+    fn if_vpn_inside(&self, vpn: VirtPageNum) -> bool {
+        if self.vpn_range.get_start() <= vpn && self.vpn_range.get_end() > vpn {
+            true
+        } else {
+            false
         }
     }
 }

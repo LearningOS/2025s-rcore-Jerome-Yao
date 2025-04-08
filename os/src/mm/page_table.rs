@@ -1,6 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -27,7 +27,7 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 /// page table entry structure
 pub struct PageTableEntry {
@@ -123,6 +123,9 @@ impl PageTable {
         for (i, idx) in idxs.iter().enumerate() {
             let pte = &mut ppn.get_pte_array()[*idx];
             if i == 2 {
+                if !pte.is_valid() {
+                    return None;
+                }
                 result = Some(pte);
                 break;
             }
@@ -151,6 +154,10 @@ impl PageTable {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
     }
+    /// get the page table entry from the virtual page number
+    pub fn translate_create(&mut self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        self.find_pte_create(vpn).map(|pte| *pte)
+    }
     /// get the token from the page table
     pub fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
@@ -178,4 +185,45 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// translate a ptr to a mut ref
+pub fn translate_ptr_mut<T>(token: usize, ptr: *mut T) -> Result<&'static mut T, isize> {
+    let page_table = PageTable::from_token(token);
+    let start_va = VirtAddr::from(ptr as usize);
+    let vpn = start_va.floor();
+    let p = page_table.translate(vpn);
+    match p {
+        Some(p) => {
+            if !p.writable() || !p.readable() {
+                println!("not writable");
+                return Err(-1);
+            }
+            let mut ppn: PhysAddr = p.ppn().into();
+            ppn.0 += start_va.page_offset();
+            Ok(ppn.get_mut())
+        }
+        None => Err(-1),
+    }
+}
+
+/// translate a ptr to a ref
+pub fn translate_ptr<T>(token: usize, ptr: *const T) -> Result<&'static T, isize> {
+    let page_table = PageTable::from_token(token);
+    let start_va = VirtAddr::from(ptr as usize);
+    let vpn = start_va.floor();
+    let p = page_table.translate(vpn);
+    match p {
+        Some(p) => {
+            if !p.readable() {
+                println!("flag:{:?}", p.flags());
+                println!("not readable");
+                return Err(-1);
+            }
+            let mut ppn: PhysAddr = p.ppn().into();
+            ppn.0 += start_va.page_offset();
+            unsafe { Ok((ppn.0 as *const T).as_ref().unwrap()) }
+        }
+        None => Err(-1),
+    }
 }
